@@ -10,13 +10,13 @@
 ;  :To Do.
 ;---------------------------------------------------------------------------*
 
-	INCDIR	Include:
+	INCDIR	Includes:
 	INCLUDE	whdload.i
 	INCLUDE	whdmacros.i
 
 
 	IFD BARFLY
-	OUTPUT	IndyHeat.slave
+	OUTPUT	whdgames:IndyHeat/IndyHeat.slave
 	BOPT	O+				;enable optimizing
 	BOPT	OG+				;enable optimizing
 	BOPT	ODd-				;disable mul optimizing
@@ -33,12 +33,12 @@ EXPMEMSIZE = $0
 ;======================================================================
 
 _base
-		SLAVE_HEADER		;ws_Security + ws_ID
-		dc.w	10		;ws_Version
+		SLAVE_HEADER				;ws_Security + ws_ID
+		dc.w	17				;ws_Version
 ;;		dc.w	WHDLF_NoError|WHDLF_EmulTrap	;ws_flags
 		dc.w	WHDLF_NoError
 		IFD	USE_FASTMEM
-		dc.l	CHIPMEMSIZE		;ws_BaseMemSize
+		dc.l	CHIPMEMSIZE			;ws_BaseMemSize
 		ELSE
 		dc.l	CHIPMEMSIZE+EXPMEMSIZE
 		ENDC
@@ -57,6 +57,14 @@ _expmem
 		dc.w	_name-_base		;ws_name
 		dc.w	_copy-_base		;ws_copy
 		dc.w	_info-_base		;ws_info
+		dc.w	0			; ws_kickname
+		dc.l	0			; ws_kicksize
+		dc.w	0			; ws_kickcrc
+		dc.w	_config-_base		
+
+_config:	dc.b    "C1:X:Infinite Credits:0;"		; ws_config;
+		dc.b    "C1:X:No $150k bonus for Credits:1;"		
+		dc.b    0
 
 ;============================================================================
 
@@ -66,7 +74,7 @@ _expmem
 
 
 DECL_VERSION:MACRO
-	dc.b	"1.1"
+	dc.b	"1.2"
 	IFD BARFLY
 		dc.b	" "
 		INCBIN	"T:date"
@@ -77,11 +85,18 @@ DECL_VERSION:MACRO
 _name		dc.b	"Indy Heat"
 		dc.b	0
 _copy		dc.b	"1992 The Sales Curve",0
-_info		dc.b	"adapted & fixed by Mr Larmer & JOTD",10,10
+_info		dc.b	"Adapted & fixed by Mr Larmer & JOTD",10
+		dc.b	"Trainer by Hungry Horace",10,10
 		dc.b	"Version "
 		DECL_VERSION
 		dc.b	0
-		even
+		EVEN
+
+_tags		dc.l	WHDLTAG_CUSTOM1_GET
+_custom1	dc.l	0
+		dc.l	TAG_DONE,TAG_DONE
+		EVEN
+
 
 ; version xx.slave works
 
@@ -100,7 +115,7 @@ start	;	A0 = resident loader
 
 		lea	$1000.w,a7
 
-		lea	Tags(pc),a0
+		lea	_tags(pc),a0
 		move.l	_resload(pc),a2
 		jsr	resload_Control(a2)
 
@@ -144,61 +159,53 @@ start	;	A0 = resident loader
 		addq.l	#resload_Abort,(a7)
 		rts
 
-;--------------------------------
-
-Tags
-		dc.l	WHDLTAG_CUSTOM1_GET
-trainer
-		dc.l	0
-		dc.l	0
 
 ;--------------------------------
 
 patch_boot
-	lea	pl_boot(pc),a0
-	sub.l	a1,a1
-	move.l	_resload(pc),a2
-	jsr	resload_Patch(a2)
+		lea	pl_boot(pc),a0
+		sub.l	a1,a1
+		move.l	_resload(pc),a2
+		jsr	resload_Patch(a2)
 
-	jmp	$1050.w
+		jmp	$1050.w
 
 pl_boot
-	PL_START
-
-	PL_R	$89EE	; JOTD: was RTE
-
-	PL_P	$9918,patch_main
+		PL_START
+		PL_R	$89EE	; JOTD: was RTE
+		PL_P	$9918,patch_main
 
 ; BB4C - decrunch proc
 ; keyboard must be fixed
 
-	PL_PS	$9D24,kb_int
-	PL_P	$BDE4,Load
-	PL_END
+		PL_PS	$9D24,kb_int
+		PL_P	$BDE4,Load
+		PL_END
+
+
 
 kb_int
-	movem.l	D0,-(A7)
+		movem.l	D0,-(A7)
 
 	; quit key on 68000 / NOVBRMOVE
 
-	move.b	$bfec01,d0
-	not.b	d0
-	ror.b	#1,d0
-	cmp.b	_keyexit(pc),d0
-	bne.b	.noquit
+		move.b	$bfec01,d0
+		not.b	d0
+		ror.b	#1,d0
+		cmp.b	_keyexit(pc),d0
+		bne.b	.noquit
 
-	pea	TDREASON_OK
-	move.l	_resload(pc),-(a7)
-	addq.l	#resload_Abort,(a7)
-	rts
+		pea	TDREASON_OK
+		move.l	_resload(pc),-(a7)
+		addq.l	#resload_Abort,(a7)
+		rts
+
 .noquit
-
-	bset	#6,$BFEE01
-	moveq.l	#2,D0
-	bsr	beamdelay
-	bclr	#6,$BFEE01
-	movem.l	(A7)+,D0
-	rts
+		bset	#6,$BFEE01
+		moveq.l	#2,D0
+		bsr	beamdelay
+		bclr	#6,$BFEE01
+		rts
 
 ; < D0: numbers of vertical positions to wait
 beamdelay
@@ -225,6 +232,22 @@ patch_main
 
 	; skip the false SR pushed on the stack (routine ended by RTE, replaced by RTS)
 
+.c1	movem.l	d0,-(a7)		; preserve regs
+	move.l	_custom1(pc),d0		; CUSTOM1 tooltype 
+	btst	#0,d0			; infinite credits ?
+	beq	.c2			; 
+	move.l	#$4e714e71,($755e)	; NOP
+
+
+.c2	btst	#1,d0			; No $150,000 bonus
+	beq	.cont			; skip
+	clr.w	($755a)			; zero value credit
+	move.b	#00,($7c45)		; fix text
+	move.b	#$0C,($7c0d)		; fix text $07->$0C (+5 Y coord)
+	move.b	#$16,($7c25)		; fix text $11->$16 (+5 Y coord)
+
+.cont	movem.l	(a7)+,d0		; restore regs
+	
 	addq.l	#2,a7
 
 	; decrypt copylock (Mr Larmer magic stuff)
@@ -248,15 +271,15 @@ loop
 	bne.s	loop
 	move.l	D3,(A1)+
 
-	move.l	#$3D742CF1,(a7)
-	movem.l	(A7)+,D0-D7/A0
-	move.l	D0,$60.w
+		move.l	#$3D742CF1,(a7)
+		movem.l	(A7)+,D0-D7/A0
+		move.l	D0,$60.w
 
-	rts
+		rts
 
-	bsr	_flushcache
+		bsr	_flushcache
 
-	rts
+		rts
 
 ;--------------------------------
 
